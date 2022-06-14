@@ -60,7 +60,7 @@ RUN make -j$(nproc)
 
 
 # Build the dockerpi VM image
-FROM busybox:1.31 AS dockerpi-vm
+FROM busybox:1.34 AS dockerpi-vm
 LABEL maintainer="Luke Childs <lukechilds123@gmail.com>"
 ARG RPI_KERNEL_URL="https://github.com/dhruvvyas90/qemu-rpi-kernel/archive/afe411f2c9b04730bcc6b2168cdc9adca224227c.zip"
 ARG RPI_KERNEL_CHECKSUM="295a22f1cd49ab51b9e7192103ee7c917624b063cc5ca2e11434164638aad5f4"
@@ -90,8 +90,8 @@ ENTRYPOINT ["./entrypoint.sh"]
 # It's just the VM image with a compressed Raspbian filesystem added
 FROM dockerpi-vm as dockerpi
 LABEL maintainer="Luke Childs <lukechilds123@gmail.com>"
-ARG FILESYSTEM_IMAGE_URL="http://downloads.raspberrypi.org/raspbian_lite/images/raspbian_lite-2019-09-30/2019-09-26-raspbian-buster-lite.zip"
-ARG FILESYSTEM_IMAGE_CHECKSUM="a50237c2f718bd8d806b96df5b9d2174ce8b789eda1f03434ed2213bbca6c6ff"
+ARG FILESYSTEM_IMAGE_URL="http://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2022-01-28/2022-01-28-raspios-bullseye-armhf-lite.zip"
+ARG FILESYSTEM_IMAGE_CHECKSUM="f6e2a3e907789ac25b61f7acfcbf5708a6d224cf28ae12535a2dc1d76a62efbc"
 
 ADD $FILESYSTEM_IMAGE_URL /filesystem.zip
 

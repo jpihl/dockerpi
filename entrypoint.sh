@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# exit if anything fails.
+set -e
+
 GIB_IN_BYTES="1073741824"
 
 target="${1:-pi1}"
@@ -16,6 +19,28 @@ if [ ! -e $image_path ]; then
     exit 1
   fi
 fi
+
+mount_point="./mountpoint"
+# Create mount point
+mkdir -p $mount_point
+
+offset=$(fdisk -l $image_path | grep "Win95" | awk '{print $4}')
+# Find offset of filesystem
+# Multiply offset by 512
+offset=$(($offset * 512))
+
+# Mount filesystem
+mount -v -o offset=$offset $image_path $mount_point
+
+ls $mount_point/
+
+# Add empty ssh file to enable ssh on the pi
+touch $mount_point/ssh
+
+ls $mount_point/
+
+# Unmount filesystem
+umount $mount_point
 
 qemu-img info $image_path
 image_size_in_bytes=$(qemu-img info --output json $image_path | grep "virtual-size" | awk '{print $2}' | sed 's/,//')
