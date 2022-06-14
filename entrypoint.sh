@@ -7,13 +7,13 @@ GIB_IN_BYTES="1073741824"
 
 target="${1:-pi1}"
 image_path="/sdcard/filesystem.img"
-zip_path="/filesystem.zip"
+xz_path="/filesystem.img.xz"
 
 if [ ! -e $image_path ]; then
   echo "No filesystem detected at ${image_path}!"
-  if [ -e $zip_path ]; then
+  if [ -e $xz_path ]; then
       echo "Extracting fresh filesystem..."
-      unzip $zip_path
+      unxz $xz_path
       mv -- *.img $image_path
   else
     exit 1
@@ -24,23 +24,43 @@ mount_point="./mountpoint"
 # Create mount point
 mkdir -p $mount_point
 
-offset=$(fdisk -l $image_path | grep "Win95" | awk '{print $4}')
+# Enable SSH and set root user password
+
 # Find offset of filesystem
+offset=$(fdisk -l $image_path | grep "Win95" | awk '{print $4}')
 # Multiply offset by 512
 offset=$(($offset * 512))
 
 # Mount filesystem
 mount -v -o offset=$offset $image_path $mount_point
 
-ls $mount_point/
-
 # Add empty ssh file to enable ssh on the pi
 touch $mount_point/ssh
 
-ls $mount_point/
+echo "root:\$6$/4.VdYgDm7RJ0qM1\$FwXCeQgDKkqrOU3RIRuDSKpauAbBvP11msq9X58c8Que2l1Dwq3vdJMgiZlQSbEXGaY5esVHGBNbCxKLVNqZW1" >> $mount_point/userconf
 
 # Unmount filesystem
 umount $mount_point
+
+# Enable root SSH login
+
+mount_point2="./mountpoint2"
+# Create mount point
+mkdir -p $mount_point2
+
+
+# Find offset of filesystem
+offset=$(fdisk -l $image_path | grep "Linux" | awk '{print $4}')
+# Multiply offset by 512
+offset=$(($offset * 512))
+
+# Mount filesystem
+mount -v -o offset=$offset $image_path $mount_point2
+
+sed -i "s/#\(PermitRootLogin\).*/\1 yes/" $mount_point2/etc/ssh/sshd_config
+
+# Unmount filesystem
+umount $mount_point2
 
 qemu-img info $image_path
 image_size_in_bytes=$(qemu-img info --output json $image_path | grep "virtual-size" | awk '{print $2}' | sed 's/,//')
@@ -52,6 +72,7 @@ fi
 
 if [ "${target}" = "pi1" ]; then
   emulator=qemu-system-arm
+  cpu=arm1176
   kernel="/root/qemu-rpi-kernel/kernel-qemu-4.19.50-buster"
   dtb="/root/qemu-rpi-kernel/versatile-pb.dtb"
   machine=versatilepb
@@ -60,6 +81,7 @@ if [ "${target}" = "pi1" ]; then
   nic="--net nic --net user,hostfwd=tcp::5022-:22"
 elif [ "${target}" = "pi2" ]; then
   emulator=qemu-system-arm
+  cpu=arm1176
   machine=raspi2b
   memory=1024m
   kernel_pattern=kernel7.img
@@ -69,6 +91,7 @@ elif [ "${target}" = "pi2" ]; then
 elif [ "${target}" = "pi3" ]; then
   emulator=qemu-system-aarch64
   machine=raspi3b
+  cpu=cortex-a53
   memory=1024m
   kernel_pattern=kernel8.img
   dtb_pattern=bcm2710-rpi-3-b-plus.dtb
@@ -109,7 +132,7 @@ fi
 echo "Booting QEMU machine \"${machine}\" with kernel=${kernel} dtb=${dtb}"
 exec ${emulator} \
   --machine "${machine}" \
-  --cpu arm1176 \
+  --cpu "${cpu}" \
   --m "${memory}" \
   --drive "format=raw,file=${image_path}" \
   ${nic} \

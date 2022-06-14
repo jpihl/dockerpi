@@ -90,9 +90,9 @@ ENTRYPOINT ["./entrypoint.sh"]
 # It's just the VM image with a compressed Raspbian filesystem added
 FROM dockerpi-vm as dockerpi
 LABEL maintainer="Luke Childs <lukechilds123@gmail.com>"
-ARG FILESYSTEM_IMAGE_URL="http://downloads.raspberrypi.org/raspios_lite_armhf/images/raspios_lite_armhf-2022-01-28/2022-01-28-raspios-bullseye-armhf-lite.zip"
-ARG FILESYSTEM_IMAGE_CHECKSUM="f6e2a3e907789ac25b61f7acfcbf5708a6d224cf28ae12535a2dc1d76a62efbc"
+ARG FILESYSTEM_IMAGE_URL="http://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2022-04-07/2022-04-04-raspios-bullseye-arm64-lite.img.xz"
+ARG FILESYSTEM_IMAGE_CHECKSUM="35f1d2f4105e01f4ca888ab4ced6912411e82a2539c53c9e4e6b795f25275a1f"
 
-ADD $FILESYSTEM_IMAGE_URL /filesystem.zip
+ADD $FILESYSTEM_IMAGE_URL /filesystem.img.xz
 
-RUN echo "$FILESYSTEM_IMAGE_CHECKSUM  /filesystem.zip" | sha256sum -c
+RUN echo "$FILESYSTEM_IMAGE_CHECKSUM  /filesystem.img.xz" | sha256sum -c
