@@ -110,5 +110,14 @@ RUN cd /tmp && \
     cp qemu-rpi-kernel-*/versatile-pb.dtb /root/qemu-rpi-kernel/ && \
     rm -rf /tmp/*
 
+RUN qemu-img resize /filesystem.img 2G
+RUN fdisk -l /filesystem.img \
+  | awk "/^[^ ]*1/{print \"dd if=/filesystem.img of=./fat.img bs=512 skip=\"\$4\" count=\"\$6}" \
+  | sh
+
+RUN mkdir -p /fat
+RUN fatcat -x /fat ./fat.img
+
+
 ADD ./entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["./entrypoint.sh"]
