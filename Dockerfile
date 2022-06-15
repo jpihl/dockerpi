@@ -58,9 +58,38 @@ RUN apt-get -y install build-essential cmake
 RUN cmake fatcat-* -DCMAKE_CXX_FLAGS='-static'
 RUN make -j$(nproc)
 
+# Build the dockerpi image
+# It's just the VM image with a decompressed Raspbian filesystem added
+FROM debian:stable-slim AS image-builder
+LABEL maintainer="Luke Childs <lukechilds123@gmail.com>"
+ARG FILESYSTEM_IMAGE_URL="http://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2022-04-07/2022-04-04-raspios-bullseye-arm64-lite.img.xz"
+ARG FILESYSTEM_IMAGE_CHECKSUM="35f1d2f4105e01f4ca888ab4ced6912411e82a2539c53c9e4e6b795f25275a1f"
+
+RUN apt-get update
+
+RUN apt-get -y install wget
+RUN wget $FILESYSTEM_IMAGE_URL -O /filesystem.img.xz
+RUN echo "$FILESYSTEM_IMAGE_CHECKSUM  /filesystem.img.xz" | sha256sum -c
+
+RUN apt-get -y install xz-utils
+RUN unxz /filesystem.img.xz
+
+RUN apt-get -y install libguestfs-tools
+RUN guestfish add /filesystem.img : run : \
+    mount /dev/sda1 / : \
+    write /ssh "" : \
+    write /userconf "root:\$6$/4.VdYgDm7RJ0qM1\$FwXCeQgDKkqrOU3RIRuDSKpauAbBvP11msq9X58c8Que2l1Dwq3vdJMgiZlQSbEXGaY5esVHGBNbCxKLVNqZW1"
+
+RUN guestfish add /filesystem.img : run : \
+    mount /dev/sda2 / : \
+    download /etc/ssh/sshd_config /tmp/sshd_config
+RUN sed -i "s/#\(PermitRootLogin\).*/\1 yes/" /tmp/sshd_config
+RUN guestfish add /filesystem.img : run : \
+    mount /dev/sda2 / : \
+    upload /tmp/sshd_config /etc/ssh/sshd_config
 
 # Build the dockerpi VM image
-FROM busybox:1.34 AS dockerpi-vm
+FROM busybox:1.34 AS dockerpi
 LABEL maintainer="Luke Childs <lukechilds123@gmail.com>"
 ARG RPI_KERNEL_URL="https://github.com/dhruvvyas90/qemu-rpi-kernel/archive/afe411f2c9b04730bcc6b2168cdc9adca224227c.zip"
 ARG RPI_KERNEL_CHECKSUM="295a22f1cd49ab51b9e7192103ee7c917624b063cc5ca2e11434164638aad5f4"
@@ -69,8 +98,9 @@ COPY --from=qemu-builder /qemu/arm-softmmu/qemu-system-arm /usr/local/bin/qemu-s
 COPY --from=qemu-builder /qemu/aarch64-softmmu/qemu-system-aarch64 /usr/local/bin/qemu-system-aarch64
 COPY --from=qemu-builder /qemu/qemu-img /usr/local/bin/qemu-img
 COPY --from=fatcat-builder /fatcat/fatcat /usr/local/bin/fatcat
+COPY --from=image-builder /filesystem.img /filesystem.img
 
-ADD $RPI_KERNEL_URL /tmp/qemu-rpi-kernel.zip
+RUN wget $RPI_KERNEL_URL -O /tmp/qemu-rpi-kernel.zip
 
 RUN cd /tmp && \
     echo "$RPI_KERNEL_CHECKSUM  qemu-rpi-kernel.zip" | sha256sum -c && \
@@ -80,19 +110,5 @@ RUN cd /tmp && \
     cp qemu-rpi-kernel-*/versatile-pb.dtb /root/qemu-rpi-kernel/ && \
     rm -rf /tmp/*
 
-VOLUME /sdcard
-
 ADD ./entrypoint.sh /entrypoint.sh
 ENTRYPOINT ["./entrypoint.sh"]
-
-
-# Build the dockerpi image
-# It's just the VM image with a compressed Raspbian filesystem added
-FROM dockerpi-vm as dockerpi
-LABEL maintainer="Luke Childs <lukechilds123@gmail.com>"
-ARG FILESYSTEM_IMAGE_URL="http://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2022-04-07/2022-04-04-raspios-bullseye-arm64-lite.img.xz"
-ARG FILESYSTEM_IMAGE_CHECKSUM="35f1d2f4105e01f4ca888ab4ced6912411e82a2539c53c9e4e6b795f25275a1f"
-
-ADD $FILESYSTEM_IMAGE_URL /filesystem.img.xz
-
-RUN echo "$FILESYSTEM_IMAGE_CHECKSUM  /filesystem.img.xz" | sha256sum -c
