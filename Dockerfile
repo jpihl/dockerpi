@@ -1,38 +1,38 @@
 # Build stage for qemu-system-arm
 FROM debian:stable-slim AS qemu-builder
-ARG QEMU_VERSION=6.0.0
+ARG QEMU_VERSION=6.1.0
 ENV QEMU_TARBALL="qemu-${QEMU_VERSION}.tar.xz"
 WORKDIR /qemu
 
-RUN # Update package lists
+# Update package lists
 RUN apt-get update
 
-RUN # Pull source
+# Pull source
 RUN apt-get -y install wget
 RUN wget "https://download.qemu.org/${QEMU_TARBALL}"
 
-RUN # Verify signatures
+# Verify signatures
 RUN apt-get -y install gpg
 RUN wget "https://download.qemu.org/${QEMU_TARBALL}.sig"
 RUN gpg --keyserver keyserver.ubuntu.com --recv-keys CEACC9E15534EBABB82D3FA03353C9CEF108B584
 RUN gpg --verify "${QEMU_TARBALL}.sig" "${QEMU_TARBALL}"
 
-RUN # Extract source tarball
+# Extract source tarball
 RUN apt-get -y install pkg-config
 RUN tar xvf "${QEMU_TARBALL}"
 
-RUN # Build source
+# Build source
 # These seem to be the only deps actually required for a successful  build
 RUN apt-get -y install python build-essential libglib2.0-dev libpixman-1-dev ninja-build
 # These don't seem to be required but are specified here: https://wiki.qemu.org/Hosts/Linux
 RUN apt-get -y install libfdt-dev zlib1g-dev
 # Not required or specified anywhere but supress build warnings
 RUN apt-get -y install flex bison
-RUN "qemu-${QEMU_VERSION}/configure" --static --target-list=arm-softmmu,aarch64-softmmu
+RUN "qemu-${QEMU_VERSION}/configure" --static --target-list=aarch64-softmmu
 RUN make -j$(nproc)
 
-RUN # Strip the binary, this gives a substantial size reduction!
-RUN strip "arm-softmmu/qemu-system-arm" "aarch64-softmmu/qemu-system-aarch64" "qemu-img"
+# Strip the binary, this gives a substantial size reduction!
+RUN strip "aarch64-softmmu/qemu-system-aarch64" "qemu-img"
 
 
 # Build stage for fatcat
@@ -42,44 +42,50 @@ ARG FATCAT_CHECKSUM="303efe2aa73cbfe6fbc5d8af346d0f2c70b3f996fc891e8859213a58b95
 ENV FATCAT_TARBALL="${FATCAT_VERSION}.tar.gz"
 WORKDIR /fatcat
 
-RUN # Update package lists
+# Update package lists
 RUN apt-get update
 
-RUN # Pull source
+# Pull source
 RUN apt-get -y install wget
 RUN wget "https://github.com/Gregwar/fatcat/archive/${FATCAT_TARBALL}"
 RUN echo "${FATCAT_CHECKSUM} ${FATCAT_TARBALL}" | sha256sum --check
 
-RUN # Extract source tarball
+# Extract source tarball
 RUN tar xvf "${FATCAT_TARBALL}"
 
-RUN # Build source
+# Build source
 RUN apt-get -y install build-essential cmake
 RUN cmake fatcat-* -DCMAKE_CXX_FLAGS='-static'
 RUN make -j$(nproc)
 
 # Build the dockerpi image
-# It's just the VM image with a decompressed Raspbian filesystem added
 FROM debian:stable-slim AS image-builder
-LABEL maintainer="Luke Childs <lukechilds123@gmail.com>"
 ARG FILESYSTEM_IMAGE_URL="http://downloads.raspberrypi.org/raspios_lite_arm64/images/raspios_lite_arm64-2022-04-07/2022-04-04-raspios-bullseye-arm64-lite.img.xz"
 ARG FILESYSTEM_IMAGE_CHECKSUM="35f1d2f4105e01f4ca888ab4ced6912411e82a2539c53c9e4e6b795f25275a1f"
 
+COPY --from=qemu-builder /qemu/qemu-img /usr/local/bin/qemu-img
+
+# Update package lists
 RUN apt-get update
 
+# Pull image file
 RUN apt-get -y install wget
 RUN wget $FILESYSTEM_IMAGE_URL -O /filesystem.img.xz
 RUN echo "$FILESYSTEM_IMAGE_CHECKSUM  /filesystem.img.xz" | sha256sum -c
 
+# Extract image file
 RUN apt-get -y install xz-utils
 RUN unxz /filesystem.img.xz
 
+# Configure image using guestfish
 RUN apt-get -y install libguestfs-tools
+# Enable SSH and root user with password "raspberry"
 RUN guestfish add /filesystem.img : run : \
     mount /dev/sda1 / : \
     write /ssh "" : \
     write /userconf "root:\$6$/4.VdYgDm7RJ0qM1\$FwXCeQgDKkqrOU3RIRuDSKpauAbBvP11msq9X58c8Que2l1Dwq3vdJMgiZlQSbEXGaY5esVHGBNbCxKLVNqZW1"
 
+# Enable root login via SSH
 RUN guestfish add /filesystem.img : run : \
     mount /dev/sda2 / : \
     download /etc/ssh/sshd_config /tmp/sshd_config
@@ -88,29 +94,14 @@ RUN guestfish add /filesystem.img : run : \
     mount /dev/sda2 / : \
     upload /tmp/sshd_config /etc/ssh/sshd_config
 
-# Build the dockerpi VM image
-FROM busybox:1.34 AS dockerpi
-LABEL maintainer="Luke Childs <lukechilds123@gmail.com>"
-ARG RPI_KERNEL_URL="https://github.com/dhruvvyas90/qemu-rpi-kernel/archive/afe411f2c9b04730bcc6b2168cdc9adca224227c.zip"
-ARG RPI_KERNEL_CHECKSUM="295a22f1cd49ab51b9e7192103ee7c917624b063cc5ca2e11434164638aad5f4"
+# Resize image to be a power of two
+RUN qemu-img resize /filesystem.img 2G
 
-COPY --from=qemu-builder /qemu/arm-softmmu/qemu-system-arm /usr/local/bin/qemu-system-arm
-COPY --from=qemu-builder /qemu/aarch64-softmmu/qemu-system-aarch64 /usr/local/bin/qemu-system-aarch64
-COPY --from=qemu-builder /qemu/qemu-img /usr/local/bin/qemu-img
+# Extract the kernel and dtb files from the filesystem image
+FROM busybox:1.34 AS kernel-dtb-builder
 COPY --from=fatcat-builder /fatcat/fatcat /usr/local/bin/fatcat
 COPY --from=image-builder /filesystem.img /filesystem.img
 
-RUN wget $RPI_KERNEL_URL -O /tmp/qemu-rpi-kernel.zip
-
-RUN cd /tmp && \
-    echo "$RPI_KERNEL_CHECKSUM  qemu-rpi-kernel.zip" | sha256sum -c && \
-    unzip qemu-rpi-kernel.zip && \
-    mkdir -p /root/qemu-rpi-kernel && \
-    cp qemu-rpi-kernel-*/kernel-qemu-4.19.50-buster /root/qemu-rpi-kernel/ && \
-    cp qemu-rpi-kernel-*/versatile-pb.dtb /root/qemu-rpi-kernel/ && \
-    rm -rf /tmp/*
-
-RUN qemu-img resize /filesystem.img 2G
 RUN fdisk -l /filesystem.img \
   | awk "/^[^ ]*1/{print \"dd if=/filesystem.img of=./fat.img bs=512 skip=\"\$4\" count=\"\$6}" \
   | sh
@@ -118,6 +109,24 @@ RUN fdisk -l /filesystem.img \
 RUN mkdir -p /fat
 RUN fatcat -x /fat ./fat.img
 
+# Build the dockerpi VM image
+# FROM busybox:1.34 AS dockerpi
+FROM ubuntu:latest AS dockerpi
 
-ADD ./entrypoint.sh /entrypoint.sh
-ENTRYPOINT ["./entrypoint.sh"]
+COPY --from=qemu-builder /qemu/aarch64-softmmu/qemu-system-aarch64 /usr/local/bin/qemu-system-aarch64
+COPY --from=image-builder /filesystem.img /filesystem.img
+COPY --from=kernel-dtb-builder /fat/kernel8.img /kernel8.img
+COPY --from=kernel-dtb-builder /fat/bcm2710-rpi-3-b-plus.dtb /bcm2710-rpi-3-b-plus.dtb
+
+CMD qemu-system-aarch64 \
+  --machine raspi3b \
+  --cpu cortex-a53 \
+  --m 1024m \
+  --drive format=raw,file=/filesystem.img \
+  --dtb /bcm2710-rpi-3-b-plus.dtb \
+  --kernel /kernel8.img \
+  --append "rw earlyprintk loglevel=8 console=ttyAMA0,115200 dwc_otg.lpm_enable=0 root=/dev/mmcblk0p2 rootwait panic=1 dwc_otg.fiq_fsm_enable=0" \
+  --no-reboot \
+  --display none \
+  -netdev user,id=net0,hostfwd=tcp::5022-:22 \
+  -device usb-net,netdev=net0
